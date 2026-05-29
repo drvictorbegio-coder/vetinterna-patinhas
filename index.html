@@ -66,7 +66,7 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
 .pc{padding:10px 12px;border-radius:11px;cursor:pointer;margin-bottom:4px;border:2.5px solid transparent;background:#fafbfd;box-shadow:var(--sh);transition:all .12s;position:relative;overflow:hidden}
 .pc::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--rc,#94a3b8)}
 .pc:hover{transform:translateX(1px)}
-.pc.sel{border-color:var(--blue2);background:var(--blue3)}
+.pc.sel{border-color:var(--blue2);background:var(--blue3);border-left:4px solid var(--blue2);box-shadow:0 0 0 3px rgba(0,181,204,.15)}
 .pc-name{font-weight:800;font-size:14px;color:var(--text);padding-left:6px}
 .pc-id{font-size:10px;color:var(--gray2);font-weight:600;padding-left:6px}
 .pc-sub{font-size:11px;color:var(--gray);margin-top:1px;padding-left:6px}
@@ -1336,7 +1336,7 @@ function renderList(){
       dayLabel=diff===0?'Internado hoje':diff===1?'1º dia':''+diff+'º dia';
     }
     const isObito=p.status==='Óbito';
-    return`<div class="pc ${RISK_CSS[p.risk||'Estável']?.cls||''} ${p.id===selId?'sel':''}" onclick="selectP(${p.id})" style="--rc:${c.rc};--rc2:${c.rc2};--rc3:${c.rc3};--rc4:${c.rc4}${isObito?';opacity:.7':''}">
+    return`<div class="pc ${RISK_CSS[p.risk||'Estável']?.cls||''} ${p.id==selId?'sel':''}" onclick="selectP(${p.id})" style="--rc:${c.rc};--rc2:${c.rc2};--rc3:${c.rc3};--rc4:${c.rc4}${isObito?';opacity:.7':''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div class="pc-name">${p.name}${isObito?' <span style="font-size:10px;color:var(--red)">✝</span>':''}</div>
         <div style="font-size:10px;font-weight:700;color:var(--gray)">Box ${p.box||'—'}</div>
@@ -1366,22 +1366,29 @@ function setFilter(s,btn){
 // SELECT PATIENT
 // ══════════════════════════════════════════════════════════════════════
 function selectP(id){
-  // Ensure numeric comparison (Supabase/JSON may send strings)
-  selId = typeof id === 'string' ? parseInt(id) : id;
-  const p = getSel(); if(!p) return;
+  var p = patients.find(function(x){ return x.id==id; });
+  if(!p) return;
+  selId = p.id;
 
-  // Bug fix: switch to internados view first if on another view
+  // Switch to internados view if on another view
   if(curView !== 'internados'){
     var btn = document.querySelector('.top-nav-btn');
     switchView('internados', btn);
   }
 
   document.getElementById('m-empty').style.display='none';
-  const pv = document.getElementById('pview');
-  pv.style.display = 'flex';
+  document.getElementById('pview').style.display = 'flex';
   renderPatientHeader(p);
   switchPTab('prontuario');
-  renderList();
+
+  // Update card highlight via DOM — no re-render needed
+  document.querySelectorAll('.pc').forEach(function(el){
+    el.classList.remove('sel');
+  });
+  document.querySelectorAll('.pc').forEach(function(el){
+    var oc = el.getAttribute('onclick')||'';
+    if(oc.indexOf('selectP('+p.id+')') > -1) el.classList.add('sel');
+  });
 }
 
 function renderPatientHeader(p){
