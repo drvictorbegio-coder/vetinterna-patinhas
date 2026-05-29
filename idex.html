@@ -922,6 +922,7 @@ function startRealtime(){
   _realtimeChannel = supa.channel('vet-changes')
     .on('postgres_changes', {event:'*', schema:'public', table:'patients'}, function(payload){
       console.log('patients changed:', payload.eventType);
+      if(_suppressRealtime){ showSyncToast(); return; }
       loadData().then(function(){
         renderList();
         renderCurrentTab();
@@ -931,6 +932,7 @@ function startRealtime(){
     })
     .on('postgres_changes', {event:'*', schema:'public', table:'tasks'}, function(payload){
       console.log('tasks changed:', payload.eventType);
+      if(_suppressRealtime){ showSyncToast(); return; }
       loadData().then(function(){
         renderCurrentTab();
         if(curView==='gtarefas') renderGeneralTasks();
@@ -965,11 +967,14 @@ function decompress(str){
 }
 
 // Save to Supabase (primary) + localStorage (backup)
+var _suppressRealtime = false;
 function saveData(){
   // localStorage backup
   try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
   // Supabase
   if(!supa) return;
+  _suppressRealtime = true;
+  setTimeout(function(){ _suppressRealtime = false; }, 3000);
   supa.from('patients').upsert({id:1, data:patients, updated_at:new Date().toISOString()})
     .then(function(res){ if(res.error) console.warn('saveData error:', res.error); });
 }
