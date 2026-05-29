@@ -1481,7 +1481,8 @@ function renderPatientHeader(p){
     tabHtml+='</div></div>';
   });
   tabHtml+='</div></div>';
-  document.getElementById('ptabs').outerHTML=tabHtml;
+  var _tabEl = document.getElementById('ptabs') || document.getElementById('ptabs-wrap');
+  if(_tabEl) _tabEl.outerHTML = tabHtml;
 }
 
 
