@@ -1370,7 +1370,6 @@ function selectP(id){
   if(!p) return;
   selId = p.id;
 
-  // Switch to internados view if on another view
   if(curView !== 'internados'){
     var btn = document.querySelector('.top-nav-btn');
     switchView('internados', btn);
@@ -1381,14 +1380,17 @@ function selectP(id){
   renderPatientHeader(p);
   switchPTab('prontuario');
 
-  // Update card highlight via DOM — no re-render needed
-  document.querySelectorAll('.pc').forEach(function(el){
-    el.classList.remove('sel');
-  });
-  document.querySelectorAll('.pc').forEach(function(el){
-    var oc = el.getAttribute('onclick')||'';
-    if(oc.indexOf('selectP('+p.id+')') > -1) el.classList.add('sel');
-  });
+  // Apply selection AFTER all renders complete
+  function applySelClass(){
+    document.querySelectorAll('.pc').forEach(function(el){ el.classList.remove('sel'); });
+    document.querySelectorAll('.pc').forEach(function(el){
+      var oc = el.getAttribute('onclick')||'';
+      if(oc.indexOf('selectP('+p.id+')') > -1) el.classList.add('sel');
+    });
+  }
+  applySelClass();
+  setTimeout(applySelClass, 50);
+  setTimeout(applySelClass, 200);
 }
 
 function renderPatientHeader(p){
