@@ -1171,9 +1171,6 @@ function calcStartForToday(p, scheduleKey, startTime, freqH){
   var mm = String(firstTodayMins%60).padStart(2,'0');
   var result = hh+':'+mm;
 
-  // DEBUG LOG — remove after confirming correct
-  console.log('[calcStart] paciente='+p.name+' adm='+admDate+' hoje='+today+' daysDiff='+daysDiff+' startTime='+startTime+' freqH='+freqH+'h minutesSince='+minutesSinceAdmStart+' intervals='+intervalsSoFar+' → '+result);
-
   return result;
 }
 
