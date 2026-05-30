@@ -1141,57 +1141,42 @@ function calcStartForToday(p, scheduleKey, startTime, freqH){
   var today = todayKey();
   var admDate = p.admissionDate || today;
 
-  // Dia da internação: usa o horário configurado
+  // Day of admission: use configured start time
   if(today === admDate) return startTime;
 
-  // Dias seguintes: o início de hoje = último horário gerado ontem + intervalo
-  // Ex: internado dia 27 às 13h, a cada 6h → gera 13h, 19h. Último = 19h.
-  // Dia 28: 19h + 6h = 01h. Gera 01h, 07h, 13h, 19h. Correto!
+  // Parse start time to minutes
+  var parts = (startTime||'00:00').split(':');
+  var startMins = parseInt(parts[0])*60 + parseInt(parts[1]);
 
-  // Descobre qual foi o startTime de ontem (recursivo, 1 nível)
-  var yesterday = new Date(today + 'T12:00:00');
-  yesterday.setDate(yesterday.getDate() - 1);
-  var ydKey = yesterday.toISOString().slice(0, 10);
+  // Calculate daysDiff using integer constructor to avoid timezone issues
+  var admParts = admDate.split('-');
+  var todParts = today.split('-');
+  var admDateObj = new Date(parseInt(admParts[0]), parseInt(admParts[1])-1, parseInt(admParts[2]));
+  var todDateObj = new Date(parseInt(todParts[0]), parseInt(todParts[1])-1, parseInt(todParts[2]));
+  var daysDiff = Math.round((todDateObj - admDateObj) / (1000*60*60*24));
 
-  // Se ontem era o dia da internação, o start de ontem era o startTime original
-  // Se não era, recalculamos (mas para não recursão infinita, limitamos a 1 nível
-  // e usamos startTime como fallback)
-  var ydStart = startTime; // fallback: usa o mesmo horário inicial
+  if(daysDiff <= 0) return startTime;
 
-  // Verifica se tem dados salvos de ontem para usar como referência real
-  var ydTaskData = ((allTasks[ydKey] || {})[p.id]) || {};
-  var ydKeys = Object.keys(ydTaskData).filter(function(k){ return k.startsWith(scheduleKey); });
+  // Minutes from admission startTime to midnight of today
+  var minutesSinceAdmStart = daysDiff * 24 * 60 - startMins;
 
-  if(ydKeys.length){
-    // Tem tarefas registradas ontem — usa o último horário delas (feito ou não)
-    var ydTimes = ydKeys.map(function(k){
-      var parts = k.split('_');
-      return parts[parts.length - 1];
-    }).filter(function(t){ return /^[0-2]\d:[0-5]\d$/.test(t); });
+  // How many full intervals fit?
+  var freqMins = freqH * 60;
+  var intervalsSoFar = Math.ceil(minutesSinceAdmStart / freqMins);
 
-    if(ydTimes.length){
-      ydTimes.sort();
-      var lastYd = ydTimes[ydTimes.length - 1];
-      var p2 = lastYd.split(':');
-      var nextMins = (parseInt(p2[0]) * 60 + parseInt(p2[1]) + freqH * 60) % (24 * 60);
-      return String(Math.floor(nextMins / 60)).padStart(2, '0') + ':' + String(nextMins % 60).padStart(2, '0');
-    }
-  }
+  // First slot today
+  var firstTodayMins = (startMins + intervalsSoFar * freqMins) % (24*60);
 
-  // Sem dados salvos de ontem: reconstrói os horários de ontem pelo cálculo
-  // para achar qual seria o último horário gerado
-  var ydGenStart = (ydKey === admDate) ? startTime : startTime; // simplificado
-  var ydGenTimes = genHours(ydGenStart, freqH, '');
+  var hh = String(Math.floor(firstTodayMins/60)).padStart(2,'0');
+  var mm = String(firstTodayMins%60).padStart(2,'0');
+  var result = hh+':'+mm;
 
-  if(ydGenTimes.length){
-    var lastGen = ydGenTimes[ydGenTimes.length - 1];
-    var gp = lastGen.split(':');
-    var nextM = (parseInt(gp[0]) * 60 + parseInt(gp[1]) + freqH * 60) % (24 * 60);
-    return String(Math.floor(nextM / 60)).padStart(2, '0') + ':' + String(nextM % 60).padStart(2, '0');
-  }
+  // DEBUG LOG — remove after confirming correct
+  console.log('[calcStart] paciente='+p.name+' adm='+admDate+' hoje='+today+' daysDiff='+daysDiff+' startTime='+startTime+' freqH='+freqH+'h minutesSince='+minutesSinceAdmStart+' intervals='+intervalsSoFar+' → '+result);
 
-  return startTime;
+  return result;
 }
+
 
 function getPatientTasks(p){
   const dk=todayKey();
