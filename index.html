@@ -2584,6 +2584,9 @@ function gt_conclude(patientId,taskKey,e){
   if(task.type==='vitals'){
     selId=patientId;
     openVitalsModal(patientId,taskKey);
+  } else if(task.type==='meal'){
+    selId=patientId;
+    openMealModal(patientId,taskKey);
   } else {
     toggleTask(patientId,taskKey);
   }
