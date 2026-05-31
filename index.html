@@ -923,7 +923,12 @@ function startRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'patients'}, function(payload){
       console.log('patients changed:', payload.eventType);
       if(_suppressRealtime){ showSyncToast(); return; }
-      loadData().then(function(){
+      // Only reload patients, not tasks
+      supa.from('patients').select('data').eq('id',1).single().then(function(pRes){
+        if(pRes.data && pRes.data.data){
+          patients = pRes.data.data;
+          try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
+        }
         renderList();
         renderCurrentTab();
         if(curView==='monitor') renderMonitor();
@@ -933,7 +938,17 @@ function startRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'tasks'}, function(payload){
       console.log('tasks changed:', payload.eventType);
       if(_suppressRealtime){ showSyncToast(); return; }
-      loadData().then(function(){
+      // Only reload tasks, not patients
+      supa.from('tasks').select('day,data').then(function(tRes){
+        if(tRes.data && tRes.data.length){
+          // Merge incoming tasks with local — don't overwrite local tasks that are newer
+          tRes.data.forEach(function(row){
+            var localDay = allTasks[row.day];
+            // Only update if we don't have local data for this day, or merge
+            allTasks[row.day] = Object.assign({}, row.data, localDay||{});
+          });
+          try{ localStorage.setItem(TK, compress(allTasks)); } catch(e){}
+        }
         renderCurrentTab();
         if(curView==='gtarefas') renderGeneralTasks();
         showSyncToast();
@@ -974,7 +989,7 @@ function saveData(){
   // Supabase
   if(!supa) return;
   _suppressRealtime = true;
-  setTimeout(function(){ _suppressRealtime = false; }, 3000);
+  setTimeout(function(){ _suppressRealtime = false; }, 5000);
   supa.from('patients').upsert({id:1, data:patients, updated_at:new Date().toISOString()})
     .then(function(res){ if(res.error) console.warn('saveData error:', res.error); });
 }
@@ -982,13 +997,16 @@ function saveData(){
 function saveTasks(){
   // localStorage backup
   try{ localStorage.setItem(TK, compress(allTasks)); } catch(e){}
-  // Supabase — save each day
+  // Supabase — save ALL days in allTasks (not just today)
   if(!supa) return;
-  var today = todayKey();
-  if(allTasks[today]){
-    supa.from('tasks').upsert({day:today, data:allTasks[today], updated_at:new Date().toISOString()})
-      .then(function(res){ if(res.error) console.warn('saveTasks error:', res.error); });
-  }
+  var days = Object.keys(allTasks);
+  days.forEach(function(day){
+    if(!allTasks[day] || !Object.keys(allTasks[day]).length) return;
+    supa.from('tasks').upsert({day:day, data:allTasks[day], updated_at:new Date().toISOString()})
+      .then(function(res){
+        if(res.error) console.warn('saveTasks error day='+day+':', res.error);
+      });
+  });
 }
 
 // Load from Supabase (primary) + localStorage (fallback)
@@ -1177,7 +1195,7 @@ function calcStartForToday(p, scheduleKey, startTime, freqH){
 
 function getPatientTasks(p){
   const dk=todayKey();
-  const saved=((allTasks[dk]||{})[p.id])||{};
+  const saved=((allTasks[dk]||{})[String(p.id)])||{};
   const items=[];
   const isAdmissionDay = p.admissionDate === dk;
 
@@ -1254,9 +1272,10 @@ function getPatientTasks(p){
 
 function setTaskDone(patientId,taskKey,val){
   const dk=todayKey();
+  const pid=String(patientId); // always use string key for consistency
   if(!allTasks[dk]) allTasks[dk]={};
-  if(!allTasks[dk][patientId]) allTasks[dk][patientId]={};
-  allTasks[dk][patientId][taskKey]=val;
+  if(!allTasks[dk][pid]) allTasks[dk][pid]={};
+  allTasks[dk][pid][taskKey]=val;
   saveTasks();
 }
 
@@ -3153,7 +3172,7 @@ function buildPronHTML(p){
   (p.paramHistory||[]).forEach(function(h){(paramByDay[h.date]=paramByDay[h.date]||[]).push(h);});
   (p.evolution||[]).forEach(function(ev){(evolByDay[ev.date]=evolByDay[ev.date]||[]).push(ev);});
   Object.keys(allTasks).forEach(function(dk){
-    var dp=(allTasks[dk]||{})[p.id]||{};
+    var dp=(allTasks[dk]||{})[String(p.id)]||{};
     Object.keys(dp).forEach(function(k){
       var v=dp[k];
       if(v&&v.done){
@@ -3789,7 +3808,7 @@ function paramStatus(name,val,species){
 
 function hoursWithoutFood(p){
   var dk=todayKey();
-  var saved=((allTasks[dk]||{})[p.id])||{};
+  var saved=((allTasks[dk]||{})[String(p.id)])||{};
   var tasks=getPatientTasks(p);
   var doneMeals=tasks.filter(function(t){return t.type==='meal'&&t.done;});
   if(!doneMeals.length) return null;
