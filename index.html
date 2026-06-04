@@ -4030,13 +4030,21 @@ function saveInter(){
 // ══════════════════════════════════════════════════════════════════════
 function getDaysRange(p){
   var adm = p.admissionDate || todayKey();
-  var end = p.dischargeDate || todayKey();
+  var today = todayKey();
+  var endDate = p.dischargeDate || today;
+  // Never go beyond today for active patients
+  if(endDate > today) endDate = today;
   var days = [];
-  var cur = new Date(adm + 'T00:00');
-  var endD = new Date(end + 'T00:00');
+  var admParts = adm.split('-');
+  var endParts = endDate.split('-');
+  var cur = new Date(parseInt(admParts[0]), parseInt(admParts[1])-1, parseInt(admParts[2]));
+  var endD = new Date(parseInt(endParts[0]), parseInt(endParts[1])-1, parseInt(endParts[2]));
   while(cur <= endD){
-    days.push(todayKey());
-    cur.setDate(cur.getDate() + 1);
+    var y = cur.getFullYear();
+    var m = String(cur.getMonth()+1).padStart(2,'0');
+    var d = String(cur.getDate()).padStart(2,'0');
+    days.push(y+'-'+m+'-'+d);
+    cur.setDate(cur.getDate()+1);
   }
   return days;
 }
