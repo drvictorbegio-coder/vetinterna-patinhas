@@ -898,6 +898,7 @@ let selId = null;
 let curTab = 'prontuario';
 let curView = 'internados';
 let curTaskDate = null;
+let curGTDate = null;
 let newRisk = '';
 let editingPatientId = null;
 let vitalsTaskCtx = null; // {patientId, taskKey, params}
@@ -2651,10 +2652,12 @@ function renderGeneralTasks(){
   var isGTToday = gtDay === todayKey();
   var gtLabel = new Date(gtDay+'T12:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
   if(!isGTToday) gtLabel += ' ⏮';
-  document.getElementById('gt-date').textContent=gtLabel;
-  // disable next button if today
+  var gtDateEl=document.getElementById('gt-date');
+  if(gtDateEl) gtDateEl.textContent=gtLabel;
   var nextBtn=document.getElementById('gt-next-btn');
   if(nextBtn) nextBtn.style.opacity=isGTToday?'0.3':'1';
+  var prevBtn=document.getElementById('gt-prev-btn');
+  if(prevBtn) prevBtn.style.opacity=curGTDate?'1':'0.3';
   const active=patients.filter(p=>p.status!=='Alta'&&p.status!=='Óbito');
   const allT=[];
   active.forEach(p=>{
