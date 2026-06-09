@@ -3001,7 +3001,8 @@ function preEvolSkip(){
 }
 
 function preEvolAddExam(){
-  // Open exam modal, but flag that we should return to pre-evol after
+  // Close pre-evol first so m-exam opens on top cleanly
+  closeM('m-pre-evol');
   _preEvolContext = true;
   _planType='exame'; _planPrio='prioritario';
   document.querySelectorAll('.plan-type-btn').forEach(function(b){b.style.border='2px solid var(--gray5)';b.style.background='white';});
@@ -3015,7 +3016,8 @@ function preEvolAddExam(){
 }
 
 function preEvolUpdateExam(examId){
-  // Open update modal, flag to return to pre-evol after
+  // Close pre-evol first so m-concluir opens on top cleanly
+  closeM('m-pre-evol');
   _preEvolContext = true;
   openUpdatePlan(examId);
 }
