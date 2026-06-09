@@ -373,10 +373,10 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
     <div class="sb-top">
       <input id="srch" placeholder="🔍  Buscar paciente..." oninput="renderList()">
       <div class="f-row" id="frow"></div>
+      <button class="add-btn" onclick="openNewPatient()" style="margin:8px 0 4px">＋ Novo Paciente</button>
     </div>
     <div class="stats-r" id="stats-r"></div>
     <div class="list" id="plist"></div>
-    <button class="add-btn" onclick="openNewPatient()">＋ Novo Paciente</button>
     <div class="stor-info" id="stor"></div>
   </div>
 
@@ -866,6 +866,38 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
   </div>
  </div>
 </div>
+
+<!-- ONBOARDING MODAL -->
+<div class="mo h" id="m-onboarding" onclick="ovc(event,this)">
+ <div class="mb" style="max-width:460px">
+  <div class="mt">✅ Paciente cadastrado!</div>
+  <div id="m-onboarding-name" style="font-size:15px;font-weight:800;color:var(--blue2);margin-bottom:6px"></div>
+  <div style="font-size:13px;color:var(--gray);margin-bottom:20px">Complete o cadastro preenchendo as informações abaixo. Isso garante que as tarefas do plantão sejam geradas corretamente.</div>
+
+  <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px">
+    <div id="ob-med-card" onclick="closeM('m-onboarding');switchPTab('medicacoes');setTimeout(openNewMed,200)" style="display:flex;align-items:center;gap:14px;background:var(--blue3);border:2px solid var(--blue4);border-radius:13px;padding:14px 16px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--blue2)'" onmouseout="this.style.borderColor='var(--blue4)'">
+      <div style="width:44px;height:44px;background:var(--blue2);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">💊</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:800;color:var(--text)">Prescrever Medicações</div>
+        <div style="font-size:12px;color:var(--gray);margin-top:2px">Sem medicações, as tarefas de remédio não aparecem no plantão</div>
+      </div>
+      <div style="font-size:20px;color:var(--blue2)">›</div>
+    </div>
+
+    <div id="ob-diet-card" onclick="closeM('m-onboarding');switchPTab('dieta');setTimeout(openDietEdit,200)" style="display:flex;align-items:center;gap:14px;background:var(--green4);border:2px solid var(--green3);border-radius:13px;padding:14px 16px;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='var(--green)'" onmouseout="this.style.borderColor='var(--green3)'">
+      <div style="width:44px;height:44px;background:var(--green);border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">🍽️</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:800;color:var(--text)">Cadastrar Dieta</div>
+        <div style="font-size:12px;color:var(--gray);margin-top:2px">Sem dieta, as refeições não aparecem no checklist diário</div>
+      </div>
+      <div style="font-size:20px;color:var(--green)">›</div>
+    </div>
+  </div>
+
+  <button class="mc" onclick="closeM('m-onboarding')" style="width:100%;justify-content:center">Preencher depois</button>
+ </div>
+</div>
+
 
 <script>
 'use strict';
@@ -2527,6 +2559,12 @@ function renderAltas(){
   var filterMode=window._altaFilter||'todos';
   const altas=patients.filter(p=>p.status==='Alta'||p.status==='Óbito').filter(p=>filterMode==='todos'||(filterMode==='alta'&&p.status==='Alta')||(filterMode==='obito'&&p.status==='Óbito'));
   const filtered=altas.filter(p=>!q||p.name.toLowerCase().includes(q)||(p.owner||'').toLowerCase().includes(q)||(p.animalId||'').toLowerCase().includes(q));
+  // Sort by most recent first: use dischargeDate or obitoDate
+  filtered.sort(function(a,b){
+    var da = a.obitoDate||a.dischargeDate||'';
+    var db = b.obitoDate||b.dischargeDate||'';
+    return db.localeCompare(da);
+  });
   const el=document.getElementById('altas-list');
 
   if(!filtered.length){
@@ -2818,8 +2856,21 @@ function savePatient(){
       medications:[], exams:[], evolution:[], paramHistory:[], diet:null,
     };
     patients.push(p); saveData(); closeM('m-patient');
-    renderList(); selectP(p.id); toast(`${p.name} cadastrado!`);
+    renderList(); selectP(p.id);
+    // Prompt vet to fill medications and diet
+    setTimeout(function(){ openOnboarding(p); }, 400);
+    toast(`${p.name} cadastrado!`);
   }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// ONBOARDING — after new patient creation
+// ══════════════════════════════════════════════════════════════════════
+function openOnboarding(p){
+  var el = document.getElementById('m-onboarding-name');
+  if(el) el.textContent = p.name + ' — ' + p.risk + (p.box ? ' · Box ' + p.box : '');
+  openM('m-onboarding');
 }
 
 // ══════════════════════════════════════════════════════════════════════
