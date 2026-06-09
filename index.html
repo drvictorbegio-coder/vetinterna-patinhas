@@ -918,7 +918,7 @@ function initSupabase(){
   try{
     supa = window.supabase.createClient(SUPA_URL, SUPA_KEY);
     console.log('Supabase connected');
-    startRealtime();
+    // startRealtime is called AFTER loadData completes, not here
   } catch(e){
     console.warn('Supabase failed, using localStorage', e);
   }
@@ -948,11 +948,20 @@ function startRealtime(){
       // Only reload tasks, not patients
       supa.from('tasks').select('day,data').then(function(tRes){
         if(tRes.data && tRes.data.length){
-          // Merge incoming tasks with local — don't overwrite local tasks that are newer
+          // Merge: local data wins over remote (local is always more recent when not suppressed)
           tRes.data.forEach(function(row){
             var localDay = allTasks[row.day];
-            // Only update if we don't have local data for this day, or merge
-            allTasks[row.day] = Object.assign({}, row.data, localDay||{});
+            if(!localDay){
+              // No local data for this day — use remote
+              allTasks[row.day] = row.data;
+            } else {
+              // Merge per patient: local wins (don't overwrite what user just did)
+              var merged = Object.assign({}, row.data);
+              Object.keys(localDay).forEach(function(pid){
+                merged[pid] = Object.assign({}, row.data[pid]||{}, localDay[pid]);
+              });
+              allTasks[row.day] = merged;
+            }
           });
           try{ localStorage.setItem(TK, compress(allTasks)); } catch(e){}
         }
@@ -990,13 +999,15 @@ function decompress(str){
 
 // Save to Supabase (primary) + localStorage (backup)
 var _suppressRealtime = false;
+var _suppressRealtimeTimer = null;
 function saveData(){
   // localStorage backup
   try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
   // Supabase
   if(!supa) return;
   _suppressRealtime = true;
-  setTimeout(function(){ _suppressRealtime = false; }, 5000);
+  clearTimeout(_suppressRealtimeTimer);
+  _suppressRealtimeTimer = setTimeout(function(){ _suppressRealtime = false; }, 8000);
   supa.from('patients').upsert({id:1, data:patients, updated_at:new Date().toISOString()})
     .then(function(res){ if(res.error) console.warn('saveData error:', res.error); });
 }
@@ -1006,6 +1017,10 @@ function saveTasks(){
   try{ localStorage.setItem(TK, compress(allTasks)); } catch(e){}
   // Supabase — save ALL days in allTasks (not just today)
   if(!supa) return;
+  // Suppress realtime to avoid overwriting what we just saved
+  _suppressRealtime = true;
+  clearTimeout(_suppressRealtimeTimer);
+  _suppressRealtimeTimer = setTimeout(function(){ _suppressRealtime = false; }, 8000);
   var days = Object.keys(allTasks);
   days.forEach(function(day){
     if(!allTasks[day] || !Object.keys(allTasks[day]).length) return;
@@ -2525,7 +2540,14 @@ function renderAltas(){
   filtered.forEach(function(p){
     var isObito=p.status==='Óbito';
     const c=riskStyle(p.risk||'Estável');
-    const dias=p.admissionDate&&p.dischargeDate?Math.round((new Date(p.dischargeDate)-new Date(p.admissionDate))/(1000*60*60*24)):null;
+    const diasRaw=(()=>{
+      if(!p.admissionDate||!p.dischargeDate) return null;
+      var ap=p.admissionDate.split('-'), dp=p.dischargeDate.split('-');
+      var a=new Date(parseInt(ap[0]),parseInt(ap[1])-1,parseInt(ap[2]));
+      var d=new Date(parseInt(dp[0]),parseInt(dp[1])-1,parseInt(dp[2]));
+      return Math.round((d-a)/(1000*60*60*24));
+    })();
+    const dias=diasRaw;
     const evolCount=(p.evolution||[]).length;
     const paramCount=(p.paramHistory||[]).length;
     const medCount=(p.medications||[]).length;
@@ -2710,7 +2732,8 @@ function renderGeneralTasks(){
 function gt_conclude(patientId,taskKey,e){
   e.stopPropagation();
   const p=patients.find(x=>x.id===patientId); if(!p) return;
-  const tasks=getPatientTasks(p);
+  const gtDay = curGTDate || todayKey();
+  const tasks=getPatientTasks(p, gtDay);
   const task=tasks.find(t=>t.key===taskKey); if(!task) return;
   if(task.type==='vitals'){
     selId=patientId;
@@ -2719,7 +2742,9 @@ function gt_conclude(patientId,taskKey,e){
     selId=patientId;
     openMealModal(patientId,taskKey);
   } else {
-    toggleTask(patientId,taskKey);
+    setTaskDone(patientId,taskKey,{...task,done:true,doneAt:nowTime()}, gtDay);
+    renderGeneralTasks();
+    renderList();
   }
 }
 
@@ -2732,7 +2757,7 @@ function openNewPatient(){
   document.getElementById('m-patient-title').textContent='🐾 Novo Paciente';
   // reset form
   ['np-id','np-name','np-breed','np-age','np-weight','np-owner','np-phone','np-box','np-diag','np-vet'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  document.getElementById('np-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('np-date').value=todayKey();
   document.getElementById('np-species').value='Cão';
   document.querySelectorAll('.risk-card').forEach(c=>{ c.style.border='2px solid var(--border)'; c.style.background=''; });
   openM('m-patient');
@@ -2815,7 +2840,7 @@ function openDischarge(){
 function confirmDischarge(){
   const p=getSel(); if(!p) return;
   p.status="Alta";
-  p.dischargeDate=document.getElementById("disch-date").value||new Date().toISOString().slice(0,10);
+  p.dischargeDate=document.getElementById("disch-date").value||todayKey();
   p.dischargeTime=document.getElementById("disch-time").value||nowTime();
   p.dischargeResp=document.getElementById("disch-resp").value;
   p.dischargeObs=document.getElementById("disch-obs").value;
@@ -2942,7 +2967,7 @@ function openPlanejamento(){
   document.getElementById('plan-exam-select').style.display='none';
   document.getElementById('ne-title').value='';
   document.getElementById('ne-obs').value='';
-  document.getElementById('ne-date').value=new Date().toISOString().slice(0,10);
+  document.getElementById('ne-date').value=todayKey();
   document.getElementById('ne-time').value='';
   document.getElementById('ne-status').value='pendente';
   openM('m-exam');
@@ -3003,7 +3028,10 @@ function saveExam(){
 function deleteExam(id){
   const p=getSel(); if(!p) return;
   p.exams=p.exams.filter(e=>e.id!==id);
-  saveData(); renderExames(p); toast('Exame removido.');
+  saveData();
+  const cntEx=document.getElementById('pcnt');
+  if(cntEx) cntEx.innerHTML=renderExames(p);
+  renderList(); toast('Exame removido.');
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3070,8 +3098,10 @@ function saveEvol(){
   const last=getLastParam(p);
   const snapParams=last?.values||null;
 
-  // snapshot: intercorrencias do dia
-  const snapInter=(p.intercorrencias||[]).filter(function(i){ return i.date===todayKey(); });
+  const evolDate = document.getElementById('nev-date').value || todayKey();
+
+  // snapshot: intercorrencias do dia da evolução
+  const snapInter=(p.intercorrencias||[]).filter(function(i){ return i.date===evolDate; });
 
   // snapshot: planejamento pendente
   const snapPlan=(p.exams||[]).filter(e=>{
@@ -3096,7 +3126,7 @@ function saveEvol(){
 
   const ev={
     id:uid(),
-    date:document.getElementById('nev-date').value,
+    date:evolDate,
     time:document.getElementById('nev-time').value,
     vet:document.getElementById('nev-vet').value,
     text,
@@ -3699,7 +3729,7 @@ window.openM=function(id){
   if(id==='m-backup') renderBackupStats();
 };
 
-document.getElementById('ne-date').value=new Date().toISOString().slice(0,10);
+document.getElementById('ne-date').value=todayKey();
 
 // ══════════════════════════════════════════════════════════════════════
 // ÓBITO
@@ -4170,7 +4200,7 @@ function renderHistorico(p){
 
   var medsAdminByDay = {};
   Object.keys(allTasks).forEach(function(dk){
-    var dayPat = (allTasks[dk]||{})[p.id]||{};
+    var dayPat = (allTasks[dk]||{})[String(p.id)]||{};
     Object.keys(dayPat).forEach(function(k){
       if(k.startsWith('med_') && dayPat[k] && dayPat[k].done){
         if(!medsAdminByDay[dk]) medsAdminByDay[dk]=[];
@@ -4181,7 +4211,7 @@ function renderHistorico(p){
 
   var mealsAdminByDay = {};
   Object.keys(allTasks).forEach(function(dk){
-    var dayPat = (allTasks[dk]||{})[p.id]||{};
+    var dayPat = (allTasks[dk]||{})[String(p.id)]||{};
     Object.keys(dayPat).forEach(function(k){
       if(k.startsWith('meal_') && dayPat[k] && dayPat[k].done){
         if(!mealsAdminByDay[dk]) mealsAdminByDay[dk]=[];
@@ -4719,7 +4749,7 @@ function tryLogin(){
     document.getElementById('login-screen').style.display='none';
     err.style.display='none';
     initSupabase();
-    loadData().then(function(){ renderList(); });
+    loadData().then(function(){ startRealtime(); renderList(); });
     updateClock();
   } else {
     err.style.display='block';
@@ -4740,7 +4770,7 @@ function togglePwd(){
   if(sessionStorage.getItem('vet_auth')==='1'){
     document.getElementById('login-screen').style.display='none';
     initSupabase();
-    loadData().then(function(){ renderList(); updateClock(); setInterval(updateClock,30000); renderList(); });
+    loadData().then(function(){ startRealtime(); renderList(); updateClock(); setInterval(updateClock,30000); renderList(); });
     return;
   }
   updateClock();
