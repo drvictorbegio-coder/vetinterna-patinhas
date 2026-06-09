@@ -899,6 +899,15 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
 </div>
 
 
+<!-- PRE-EVOL EXAMES MODAL -->
+<div class="mo h" id="m-pre-evol" onclick="ovc(event,this)">
+ <div class="mb" style="max-width:520px;max-height:80vh;overflow-y:auto">
+  <div class="mt" id="pre-evol-title">📋 Exames &amp; Consultas</div>
+  <div id="pre-evol-body"></div>
+ </div>
+</div>
+
+
 <script>
 'use strict';
 // ══════════════════════════════════════════════════════════════════════
@@ -2357,6 +2366,18 @@ function renderEvolucao(p){
 
 function openEvol(){
   const p=getSel(); if(!p) return;
+  // Check if we need to show the pre-evol exames screen
+  var exams = p.exams||[];
+  var pending = exams.filter(function(e){
+    var log=e.log||[];
+    var st=log.length?(log[log.length-1].status==='realizado'?'concluido':log[log.length-1].status):(e.examStatus==='Concluído'?'concluido':e.examStatus||'solicitado');
+    return st!=='concluido'&&st!=='cancelado';
+  });
+  // Always show pre-evol screen — with pending list, or just "add new" option
+  openPreEvol(p, pending, exams.length===0);
+}
+
+function _openEvolModal(p){
   const now=new Date();
   document.getElementById('nev-date').value=todayKey();
   document.getElementById('nev-time').value=now.toTimeString().slice(0,5);
@@ -2870,8 +2891,136 @@ function savePatient(){
 function openOnboarding(p){
   var el = document.getElementById('m-onboarding-name');
   if(el) el.textContent = p.name + ' — ' + p.risk + (p.box ? ' · Box ' + p.box : '');
+  // Show both cards
+  var medCard = document.getElementById('ob-med-card');
+  var title = document.querySelector('#m-onboarding .mt');
+  var subtitle = document.querySelector('#m-onboarding .mb > div:nth-child(3)');
+  if(medCard) medCard.style.display = 'flex';
+  if(title) title.textContent = '✅ Paciente cadastrado!';
+  if(subtitle) subtitle.style.display = '';
   openM('m-onboarding');
 }
+
+function openOnboardingDietOnly(p){
+  var el = document.getElementById('m-onboarding-name');
+  if(el) el.textContent = p.name + ' — ' + p.risk + (p.box ? ' · Box ' + p.box : '');
+  // Hide med card, show only diet
+  var medCard = document.getElementById('ob-med-card');
+  var title = document.querySelector('#m-onboarding .mt');
+  var subtitle = document.querySelector('#m-onboarding .mb > div:nth-child(3)');
+  if(medCard) medCard.style.display = 'none';
+  if(title) title.textContent = '💊 Medicação salva!';
+  if(subtitle) subtitle.textContent = 'Não esqueça de cadastrar a dieta do paciente para que as refeições apareçam no plantão.';
+  openM('m-onboarding');
+}
+
+
+// ══════════════════════════════════════════════════════════════════════
+// PRE-EVOL — Exames check before writing evolution
+// ══════════════════════════════════════════════════════════════════════
+var _preEvolPatientId = null; // remember which patient we're in pre-evol for
+
+function openPreEvol(p, pending, noExams){
+  _preEvolPatientId = p.id;
+  var title = document.getElementById('pre-evol-title');
+  var body  = document.getElementById('pre-evol-body');
+
+  var STATUS_STYLE = {
+    solicitado:{emoji:'⏳',label:'Solicitado',   bg:'#f1f5f9',text:'#64748b',border:'#e2e8f0'},
+    agendado:  {emoji:'📅',label:'Agendado',     bg:'#f3e8ff',text:'#9333ea',border:'#e9d5ff'},
+    coletado:  {emoji:'🧪',label:'Coletado',     bg:'#e8fcff',text:'#2563eb',border:'#bfdbfe'},
+    aguardando:{emoji:'⌛',label:'Ag. resultado',bg:'#fffbeb',text:'#d97706',border:'#fde68a'},
+    concluido: {emoji:'✅',label:'Concluído',    bg:'#f0fdf4',text:'#16a34a',border:'#bbf7d0'},
+    cancelado: {emoji:'❌',label:'Cancelado',    bg:'#fef2f2',text:'#dc2626',border:'#fecaca'},
+  };
+  var TYPE_ICON = {exame:'🔬',especialista:'👩‍⚕️',procedimento:'⚕️'};
+
+  var addBtn = '<button onclick="preEvolAddExam()" style="flex:1;padding:10px;background:var(--gray3);color:var(--gray);border:1.5px solid var(--gray5);border-radius:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">＋ Adicionar exame/consulta</button>';
+  var skipBtn = '<button onclick="preEvolSkip()" style="flex:2;padding:10px;background:var(--blue);color:white;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Continuar para Evolução →</button>';
+
+  if(noExams){
+    // No exams at all — ask if want to add
+    title.textContent = '📋 Exames & Consultas';
+    body.innerHTML =
+      '<div style="text-align:center;padding:10px 0 18px">'
+      +'<div style="font-size:36px;margin-bottom:8px">🔬</div>'
+      +'<div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px">Nenhum exame ou consulta cadastrado</div>'
+      +'<div style="font-size:13px;color:var(--gray);margin-bottom:20px">Tem algum exame, consulta ou procedimento a registrar antes de escrever a evolução?</div>'
+      +'</div>'
+      +'<div style="display:flex;gap:8px">'
+      + addBtn + skipBtn
+      +'</div>';
+  } else if(pending.length===0){
+    // All concluded — just offer to add new
+    title.textContent = '📋 Exames & Consultas';
+    body.innerHTML =
+      '<div style="text-align:center;padding:10px 0 18px">'
+      +'<div style="font-size:36px;margin-bottom:8px">✅</div>'
+      +'<div style="font-size:14px;font-weight:700;color:var(--green);margin-bottom:6px">Todos os exames concluídos</div>'
+      +'<div style="font-size:13px;color:var(--gray);margin-bottom:20px">Tem algum novo exame, consulta ou procedimento a registrar?</div>'
+      +'</div>'
+      +'<div style="display:flex;gap:8px">'
+      + addBtn + skipBtn
+      +'</div>';
+  } else {
+    // Has pending exams — show list
+    title.textContent = '📋 Atualizar Exames antes da Evolução';
+    var rows = pending.map(function(e){
+      var log = e.log||[];
+      var last = log.length ? log[log.length-1] : null;
+      var st = last ? (last.status==='realizado'?'concluido':last.status) : 'solicitado';
+      var ss = STATUS_STYLE[st]||STATUS_STYLE.solicitado;
+      var icon = TYPE_ICON[e.planType]||'📋';
+      var prio = e.priority==='urgente'?'<span style="font-size:10px;font-weight:700;color:var(--red);background:var(--red2);border-radius:4px;padding:1px 6px;margin-left:6px">🔴 Urgente</span>':
+                 e.priority==='prioritario'?'<span style="font-size:10px;font-weight:700;color:var(--yellow);background:var(--yellow2);border-radius:4px;padding:1px 6px;margin-left:6px">🟡 Prioritário</span>':'';
+      return '<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:white;border:1.5px solid '+ss.border+';border-radius:11px;margin-bottom:8px">'
+        +'<div style="font-size:20px;flex-shrink:0">'+icon+'</div>'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:13px;font-weight:800;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+(e.title||e.name||'—')+prio+'</div>'
+        +(last&&last.note?'<div style="font-size:11px;color:var(--gray);margin-top:1px">'+last.note+'</div>':'')
+        +'<div style="display:inline-flex;align-items:center;gap:4px;margin-top:4px;background:'+ss.bg+';color:'+ss.text+';border:1px solid '+ss.border+';border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700">'+ss.emoji+' '+ss.label+'</div>'
+        +'</div>'
+        +'<button onclick="preEvolUpdateExam('+e.id+')" style="padding:8px 14px;background:var(--blue2);color:white;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">Atualizar</button>'
+        +'</div>';
+    }).join('');
+
+    body.innerHTML =
+      '<div style="font-size:12px;color:var(--gray);margin-bottom:14px">Atualize os exames pendentes antes de escrever a evolução. Os resultados aparecerão automaticamente no resumo.</div>'
+      + rows
+      +'<div style="display:flex;gap:8px;margin-top:6px">'
+      + addBtn + skipBtn
+      +'</div>';
+  }
+  openM('m-pre-evol');
+}
+
+function preEvolSkip(){
+  closeM('m-pre-evol');
+  var p = patients.find(function(x){ return x.id===_preEvolPatientId; });
+  if(p) _openEvolModal(p);
+}
+
+function preEvolAddExam(){
+  // Open exam modal, but flag that we should return to pre-evol after
+  _preEvolContext = true;
+  _planType='exame'; _planPrio='prioritario';
+  document.querySelectorAll('.plan-type-btn').forEach(function(b){b.style.border='2px solid var(--gray5)';b.style.background='white';});
+  document.querySelectorAll('.plan-prio-btn').forEach(function(b){b.style.border='2px solid var(--gray5)';b.style.background='white';});
+  document.getElementById('plan-exam-select').style.display='none';
+  document.getElementById('ne-title').value='';
+  document.getElementById('ne-obs').value='';
+  document.getElementById('ne-date').value=todayKey();
+  document.getElementById('ne-time').value='';
+  openM('m-exam');
+}
+
+function preEvolUpdateExam(examId){
+  // Open update modal, flag to return to pre-evol after
+  _preEvolContext = true;
+  openUpdatePlan(examId);
+}
+
+var _preEvolContext = false; // true when modals opened from pre-evol flow
 
 // ══════════════════════════════════════════════════════════════════════
 // DISCHARGE
@@ -2972,6 +3121,10 @@ function saveMed(){
   renderCurrentTab();
   renderList();
   toast(editId?'Medicação atualizada!':'Medicação adicionada!');
+  // If patient has no diet yet, remind vet to fill it
+  if(!editId && !p.diet){
+    setTimeout(function(){ openOnboardingDietOnly(p); }, 400);
+  }
 }
 function saveMed_unused(){
   const name=document.getElementById('nm-name').value.trim(); if(!name){toast('Informe o medicamento',true);return;}
@@ -3072,9 +3225,34 @@ function saveExam(){
   if(!p.exams) p.exams=[];
   p.exams.push(exam); saveData();
   closeM('m-exam');
-  var cnt=document.getElementById('pcnt');
-  if(cnt) cnt.innerHTML=renderExames(p);
-  renderList(); toast('Adicionado ao planejamento!');
+  // If opened from pre-evol flow, go back to pre-evol
+  if(_preEvolContext){
+    // Don't clear _preEvolContext yet — open status modal for the new exam right away
+    // so vet can mark it concluido/resultado immediately if they want
+    _preEvolContext = false;
+    setTimeout(function(){
+      var pp2 = patients.find(function(x){ return x.id===_preEvolPatientId; });
+      if(pp2){
+        var newExam = (pp2.exams||[]).slice(-1)[0]; // the one just added
+        if(newExam){
+          _preEvolContext = true; // flag again so after status save returns to pre-evol
+          openUpdatePlan(newExam.id);
+        } else {
+          var pending3 = (pp2.exams||[]).filter(function(e){
+            var log=e.log||[];
+            var st=log.length?(log[log.length-1].status==='realizado'?'concluido':log[log.length-1].status):(e.examStatus==='Concluído'?'concluido':e.examStatus||'solicitado');
+            return st!=='concluido'&&st!=='cancelado';
+          });
+          openPreEvol(pp2, pending3, false);
+        }
+      }
+    }, 200);
+  } else {
+    var cnt=document.getElementById('pcnt');
+    if(cnt) cnt.innerHTML=renderExames(p);
+    renderList();
+  }
+  toast('Adicionado ao planejamento!');
 }
 function deleteExam(id){
   const p=getSel(); if(!p) return;
@@ -4754,9 +4932,29 @@ function saveConcluirPlan(){
 
   saveData();
   closeM('m-concluir');
-  var cnt=document.getElementById('pcnt');
-  if(cnt) cnt.innerHTML=renderExames(p);
-  renderList();
+  // If opened from pre-evol flow, refresh pre-evol screen
+  if(_preEvolContext){
+    _preEvolContext = false;
+    var pp = patients.find(function(x){ return x.id===_preEvolPatientId; });
+    if(pp){
+      var pending2 = (pp.exams||[]).filter(function(e){
+        var log=e.log||[];
+        var st=log.length?(log[log.length-1].status==='realizado'?'concluido':log[log.length-1].status):(e.examStatus==='Concluído'?'concluido':e.examStatus||'solicitado');
+        return st!=='concluido'&&st!=='cancelado';
+      });
+      if(pending2.length > 0){
+        openPreEvol(pp, pending2, false);
+      } else {
+        // All done — go straight to evol
+        closeM('m-pre-evol');
+        _openEvolModal(pp);
+      }
+    }
+  } else {
+    var cnt=document.getElementById('pcnt');
+    if(cnt) cnt.innerHTML=renderExames(p);
+    renderList();
+  }
   toast('Planejamento atualizado!');
 }
 
