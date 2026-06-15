@@ -528,7 +528,10 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
   </div>
   <div class="g2">
     <div class="fg"><label>Frequência</label>
-      <select id="nm-freq">
+      <select id="nm-freq" onchange="toggleMedFreqFields()">
+        <option value="1">A cada 1 hora</option>
+        <option value="2">A cada 2 horas</option>
+        <option value="3">A cada 3 horas</option>
         <option value="6">A cada 6 horas</option>
         <option value="8">A cada 8 horas</option>
         <option value="12">A cada 12 horas</option>
@@ -539,6 +542,10 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
       </select>
     </div>
     <div class="fg"><label>Horário Inicial</label><input type="time" id="nm-start"></div>
+  </div>
+  <div class="fg" id="nm-date-row" style="display:none">
+    <label>Data da Dose Única *</label>
+    <input type="date" id="nm-date">
   </div>
   <div class="fg"><label>Observações</label><textarea id="nm-notes" placeholder="Ex: Diluir em 100ml SF 0,9%"></textarea></div>
   <div class="mbtns">
@@ -683,6 +690,7 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
   </div>
   <div class="fg"><label>Responsável</label><input id="vt-resp" placeholder="Nome do responsável"></div>
   <div id="vt-fields" class="vf-grid" style="grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0"></div>
+  <div id="vt-extra-wrap"></div>
   <div class="fg"><label>Observações</label><textarea id="vt-obs" style="min-height:60px" placeholder="Observações adicionais..."></textarea></div>
   <div class="mbtns">
     <button class="mc" onclick="closeM('m-vitals')">Cancelar</button>
@@ -1296,8 +1304,13 @@ function getPatientTasks(p, forDate){
         ? m.start
         : calcStartForToday(p, schedKey, m.start, freqH);
       times=genHours(medStart, freqH, '');
-    } else if(['EDA','DU','CI'].includes(m.freq)){
-      // non-recurring: show once at start time or 08:00
+    } else if(m.freq==='DU'){
+      // Dose única: only appears on the date it was prescribed
+      if(m.date && m.date===dk){
+        times=[m.start||'08:00'];
+      }
+    } else if(['EDA','CI'].includes(m.freq)){
+      // non-recurring but ongoing: show once at start time or 08:00, every day
       times=[m.start||'08:00'];
     }
     times.forEach(t=>{
@@ -1882,7 +1895,34 @@ function openVitalsModal(patientId,taskKey){
     return '<div style="margin-bottom:6px"><label style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">'+pr+'</label>'+inputEl+'</div>';
   }).join('');
 
+  // Optional extra parameter — Glicemia (for risks that don't require it by default)
+  var extraWrap=document.getElementById('vt-extra-wrap');
+  if(extraWrap){
+    if(params.includes('Glicemia')){
+      extraWrap.innerHTML='';
+    } else {
+      extraWrap.innerHTML =
+        '<div style="margin-bottom:10px">'
+        +'<label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--blue2);cursor:pointer">'
+        +'<input type="checkbox" id="vt-glic-toggle" onchange="toggleGlicemiaField()" style="width:16px;height:16px;cursor:pointer">'
+        +'➕ Incluir Glicemia neste registro'
+        +'</label>'
+        +'<div id="vt-glic-field" style="display:none;margin-top:6px">'
+        +'<label style="font-size:9px;font-weight:700;color:var(--gray2);text-transform:uppercase;letter-spacing:.4px;display:block;margin-bottom:3px">Glicemia (mg/dL)</label>'
+        +'<input id="vtf_Glicemia" placeholder="Ex: 95" style="width:100%;max-width:220px;padding:8px 9px;border:1.5px solid var(--gray5);border-radius:8px;font-size:13px;outline:none;background:var(--gray3);font-family:inherit">'
+        +'</div>'
+        +'</div>';
+    }
+  }
+
   openM('m-vitals');
+}
+
+function toggleGlicemiaField(){
+  var chk=document.getElementById('vt-glic-toggle');
+  var field=document.getElementById('vt-glic-field');
+  if(!chk||!field) return;
+  field.style.display = chk.checked ? '' : 'none';
 }
 
 function saveVitals(){
@@ -1920,6 +1960,15 @@ function saveVitals(){
   }
 
   const obs=document.getElementById('vt-obs').value;
+
+  // Optional extra param — Glicemia
+  var glicToggle=document.getElementById('vt-glic-toggle');
+  if(glicToggle && glicToggle.checked){
+    var glicEl=document.getElementById('vtf_Glicemia');
+    var glicVal=glicEl?glicEl.value.trim():'';
+    if(glicVal) values['Glicemia']=glicVal;
+  }
+
   const entry={date,time,resp,values,obs,taskKey,risk:p.risk,id:uid()};
 
   // save to task
@@ -1961,7 +2010,7 @@ function renderMedicacoes(p){
         <div class="med-ico">💊</div>
         <div style="flex:1">
           <div class="med-name">${m.name} <span style="font-weight:400;color:var(--gray)">— ${m.dose||''}${m.vol?' | '+m.vol:''}</span></div>
-          <div class="med-sub">Via ${m.route} · ${m.freq==='EDA'?'EDA':m.freq==='DU'?'Dose única':m.freq==='CI'?'Infusão contínua':`${m.freq}h/h`}${m.notes?' · '+m.notes:''}</div>
+          <div class="med-sub">Via ${m.route} · ${m.freq==='EDA'?'EDA':m.freq==='DU'?'Dose única'+(m.date?' — '+fmtD(m.date):''):m.freq==='CI'?'Infusão contínua':`${m.freq}h/h`}${m.notes?' · '+m.notes:''}</div>
           <div style="margin-top:3px">${timesStr}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
@@ -3077,8 +3126,18 @@ function openNewMed(){
   document.getElementById('nm-route').value='IV';
   document.getElementById('nm-freq').value='6';
   document.getElementById('nm-start').value='';
+  document.getElementById('nm-date').value=todayKey();
   document.getElementById('nm-notes').value='';
+  toggleMedFreqFields();
   openM('m-med');
+}
+
+// Show/hide the "Data da Dose Única" field based on selected frequency
+function toggleMedFreqFields(){
+  var freq=document.getElementById('nm-freq').value;
+  var row=document.getElementById('nm-date-row');
+  if(!row) return;
+  row.style.display = (freq==='DU') ? '' : 'none';
 }
 
 function openEditMed(medId){
@@ -3092,7 +3151,9 @@ function openEditMed(medId){
   document.getElementById('nm-route').value=m.route||'IV';
   document.getElementById('nm-freq').value=m.freq||'6';
   document.getElementById('nm-start').value=m.start||'';
+  document.getElementById('nm-date').value=m.date||todayKey();
   document.getElementById('nm-notes').value=m.notes||'';
+  toggleMedFreqFields();
   openM('m-med');
 }
 
@@ -3103,12 +3164,18 @@ function saveMed(){
   if(!name){toast('Informe o nome da medicação',true);return;}
   var freq=document.getElementById('nm-freq').value;
   var start=document.getElementById('nm-start').value;
+  var duDate=document.getElementById('nm-date').value;
+  if(freq==='DU' && !duDate){
+    toast('Informe a data da dose única',true);
+    return;
+  }
   var med={
     id: editId ? parseInt(editId) : uid(),
     name, dose:document.getElementById('nm-dose').value,
     vol:document.getElementById('nm-vol').value,
     route:document.getElementById('nm-route').value,
-    freq, start, notes:document.getElementById('nm-notes').value
+    freq, start, date: (freq==='DU') ? duDate : undefined,
+    notes:document.getElementById('nm-notes').value
   };
   if(editId){
     p.medications=(p.medications||[]).map(function(m){return m.id===parseInt(editId)?med:m;});
