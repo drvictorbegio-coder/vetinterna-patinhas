@@ -978,7 +978,7 @@ function startRealtime(){
   _realtimeChannel = supa.channel('vet-changes')
     .on('postgres_changes', {event:'*', schema:'public', table:'patients'}, function(payload){
       console.log('patients changed:', payload.eventType);
-      if(_suppressRealtime){ showSyncToast(); return; }
+      if(_suppressRealtimePatients){ showSyncToast(); return; }
       // Only reload patients, not tasks
       supa.from('patients').select('data').eq('id',1).single().then(function(pRes){
         if(pRes.data && pRes.data.data){
@@ -1049,14 +1049,17 @@ function decompress(str){
 // Save to Supabase (primary) + localStorage (backup)
 var _suppressRealtime = false;
 var _suppressRealtimeTimer = null;
+var _suppressRealtimePatients = false;
+var _suppressRealtimePatientsTimer = null;
 function saveData(){
   // localStorage backup
   try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
   // Supabase
   if(!supa) return;
   _suppressRealtime = true;
-  clearTimeout(_suppressRealtimeTimer);
-  _suppressRealtimeTimer = setTimeout(function(){ _suppressRealtime = false; }, 8000);
+  _suppressRealtimePatients = true;
+  clearTimeout(_suppressRealtimePatientsTimer);
+  _suppressRealtimePatientsTimer = setTimeout(function(){ _suppressRealtimePatients = false; }, 12000);
   supa.from('patients').upsert({id:1, data:patients, updated_at:new Date().toISOString()})
     .then(function(res){ if(res.error) console.warn('saveData error:', res.error); });
 }
@@ -1085,14 +1088,26 @@ async function loadData(){
   if(supa){
     try{
       var pRes = await supa.from('patients').select('data').eq('id',1).single();
-      if(pRes.data && pRes.data.data) patients = pRes.data.data;
-      else patients = [];
+      // CRITICAL: only overwrite patients if Supabase returned valid non-empty data
+      // If Supabase returns null/empty, keep localStorage data to avoid wiping evolutions
+      if(pRes.data && pRes.data.data && Array.isArray(pRes.data.data) && pRes.data.data.length > 0){
+        patients = pRes.data.data;
+      } else if(pRes.data && pRes.data.data && Array.isArray(pRes.data.data)){
+        // Supabase returned empty array — trust localStorage if it has data
+        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d && d.length>0){ patients=d; } else { patients=[]; } } catch(e){ patients=[]; }
+      } else {
+        // Supabase returned null — use localStorage as fallback
+        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d) patients=d; } catch(e){ patients=[]; }
+      }
 
       var tRes = await supa.from('tasks').select('day,data');
       if(tRes.data && tRes.data.length){
         allTasks = {};
         tRes.data.forEach(function(row){ allTasks[row.day] = row.data; });
-      } else { allTasks = {}; }
+      } else {
+        // Tasks empty from Supabase — use localStorage
+        try{ const r=localStorage.getItem(TK); const d=decompress(r); if(d) allTasks=d; } catch(e){ allTasks={}; }
+      }
 
       // Sync to localStorage as backup
       try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
