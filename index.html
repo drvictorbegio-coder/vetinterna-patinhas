@@ -984,12 +984,21 @@ function startRealtime(){
       // Only reload patients, not tasks
       supa.from('patients').select('data').eq('id',1).single().then(function(pRes){
         if(pRes.data && pRes.data.data){
-          var evolAntes = patients.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0);
-          var evolDepois = pRes.data.data.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0);
-          console.log('[VET-RT] Realtime patients. Evoluções antes:', evolAntes, '| depois:', evolDepois);
-          if(evolDepois < evolAntes){ console.error('[VET-RT] ALERTA: Realtime ia apagar', evolAntes-evolDepois, 'evoluções!'); }
-          patients = pRes.data.data;
-          try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
+          var _raw = pRes.data.data;
+          var _loaded = null;
+          if(typeof _raw === 'string'){
+            try{ _loaded = JSON.parse(LZString.decompressFromUTF16(_raw)); } catch(e){ console.warn('[VET-RT] decompress failed'); }
+          } else if(Array.isArray(_raw)){
+            _loaded = _raw;
+          }
+          if(_loaded && Array.isArray(_loaded)){
+            var evolAntes = patients.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0);
+            var evolDepois = _loaded.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0);
+            console.log('[VET-RT] Realtime patients. Evoluções antes:', evolAntes, '| depois:', evolDepois);
+            if(evolDepois < evolAntes){ console.error('[VET-RT] ALERTA: Realtime ia apagar', evolAntes-evolDepois, 'evoluções!'); }
+            patients = _loaded;
+            try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
+          }
         }
         renderList();
         renderCurrentTab();
@@ -1071,13 +1080,20 @@ function saveData(){
   clearTimeout(_suppressRealtimePatientsTimer);
   _suppressRealtimePatientsTimer = setTimeout(function(){ _suppressRealtimePatients = false; }, 12000);
   var patientsJSON = JSON.stringify(patients);
-  console.log('[VET-SAVE] Salvando no Supabase. Tamanho:', Math.round(patientsJSON.length/1024), 'KB | Pacientes:', patients.length, '| Evoluções totais:', patients.reduce(function(a,p){return a+(p.evolution||[]).length;},0));
-  supa.from('patients').upsert({id:1, data:patients, updated_at:new Date().toISOString()})
+  var rawKB = Math.round(patientsJSON.length/1024);
+  // Compress before saving to Supabase to stay well under 1MB limit
+  var compressed = (typeof LZString !== 'undefined') ? LZString.compressToUTF16(patientsJSON) : patientsJSON;
+  var compKB = Math.round(compressed.length/1024);
+  console.log('[VET-SAVE] Salvando. Raw:', rawKB, 'KB → Comprimido:', compKB, 'KB | Pacientes:', patients.length, '| Evoluções:', patients.reduce(function(a,p){return a+(p.evolution||[]).length;},0));
+  // Warn if still too large even after compression
+  if(compKB > 900){
+    console.warn('[VET-SAVE] AVISO: Dados ainda grandes após compressão:', compKB, 'KB. Considere excluir pacientes de alta.');
+  }
+  supa.from('patients').upsert({id:1, data:compressed, updated_at:new Date().toISOString()})
     .then(function(res){
       if(res.error){
         console.error('[VET-SAVE] ERRO no Supabase:', JSON.stringify(res.error));
-        // Show visible alert to user so they know the save failed
-        toast('⚠️ Erro ao salvar no servidor! Dados mantidos localmente. Código: ' + (res.error.code||res.error.message||'desconhecido'), true);
+        toast('⚠️ Erro ao salvar! Dados mantidos localmente.', true);
       } else {
         console.log('[VET-SAVE] Supabase OK. Evoluções confirmadas:', patients.reduce(function(a,p){return a+(p.evolution||[]).length;},0));
       }
@@ -1112,17 +1128,23 @@ async function loadData(){
   if(supa){
     try{
       var pRes = await supa.from('patients').select('data').eq('id',1).single();
-      // CRITICAL: only overwrite patients if Supabase returned valid non-empty data
-      // If Supabase returns null/empty, keep localStorage data to avoid wiping evolutions
-      if(pRes.data && pRes.data.data && Array.isArray(pRes.data.data) && pRes.data.data.length > 0){
-        console.log('[VET-LOAD] Supabase retornou', pRes.data.data.length, 'pacientes. Evoluções totais:', pRes.data.data.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0));
-        patients = pRes.data.data;
-      } else if(pRes.data && pRes.data.data && Array.isArray(pRes.data.data)){
-        console.warn('[VET-LOAD] Supabase retornou array VAZIO. Usando localStorage.');
-        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d && d.length>0){ patients=d; console.log('[VET-LOAD] localStorage tinha', d.length, 'pacientes.'); } else { patients=[]; } } catch(e){ patients=[]; }
+      var _loaded = null;
+      if(pRes.data && pRes.data.data){
+        var _raw = pRes.data.data;
+        if(typeof _raw === 'string'){
+          // New format: compressed text
+          try{ _loaded = JSON.parse(LZString.decompressFromUTF16(_raw)); } catch(e){ console.warn('[VET-LOAD] decompress failed:', e); }
+        } else if(Array.isArray(_raw) && _raw.length > 0){
+          // Legacy format: plain jsonb array
+          _loaded = _raw;
+        }
+      }
+      if(_loaded && Array.isArray(_loaded) && _loaded.length > 0){
+        console.log('[VET-LOAD] Supabase retornou', _loaded.length, 'pacientes. Evoluções totais:', _loaded.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0));
+        patients = _loaded;
       } else {
-        console.warn('[VET-LOAD] Supabase retornou NULL. pRes:', JSON.stringify(pRes).slice(0,200), '| Usando localStorage.');
-        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d) patients=d; } catch(e){ patients=[]; }
+        console.warn('[VET-LOAD] Supabase sem dados válidos. Usando localStorage.');
+        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d && d.length>0){ patients=d; } else { patients=[]; } } catch(e){ patients=[]; }
       }
 
       var tRes = await supa.from('tasks').select('day,data');
@@ -2683,9 +2705,10 @@ function renderAltas(){
   }
 
   // storage tip
-  // Calculate real size (what goes to Supabase)
-  var realKB = Math.round(JSON.stringify(patients).length / 1024);
-  var totalKB = realKB + ' KB (Supabase)';
+  // Calculate real compressed size (what actually goes to Supabase now)
+  var rawKB = Math.round(JSON.stringify(patients).length / 1024);
+  var compStr = (typeof LZString !== 'undefined') ? LZString.compressToUTF16(JSON.stringify(patients)) : JSON.stringify(patients);
+  var realKB = Math.round(compStr.length / 1024);
   let rows='';
   filtered.forEach(function(p){
     var isObito=p.status==='Óbito';
@@ -2840,54 +2863,57 @@ async function exportAllAltasPDF(){
 
   var zip = new JSZip();
 
-  // Hidden container to render HTML
-  var container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:white;z-index:-1';
-  document.body.appendChild(container);
+  // Use iframe to render each page properly at A4 size
+  var iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;height:1122px;border:none;background:white;';
+  document.body.appendChild(iframe);
 
   for(var i=0; i<altas.length; i++){
     var p = altas[i];
     try{
-      // Render the same beautiful HTML used by PDF Completo
       var html = buildPronHTML(p);
-      container.innerHTML = html;
-      await new Promise(function(r){ setTimeout(r, 300); }); // let it render
-
-      var canvas = await html2canvas(container, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        width: 794,
-        windowWidth: 794
-      });
+      iframe.contentDocument.open();
+      iframe.contentDocument.write(html);
+      iframe.contentDocument.close();
+      // Wait for render
+      await new Promise(function(r){ setTimeout(r, 600); });
 
       var jsPDF = window.jspdf.jsPDF;
       var pdf = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
-      var pdfW = pdf.internal.pageSize.getWidth();   // 210mm
-      var pdfH = pdf.internal.pageSize.getHeight();  // 297mm
-      var imgData = canvas.toDataURL('image/jpeg', 0.90);
-      var canvasW = canvas.width;
-      var canvasH = canvas.height;
+      var pdfW = pdf.internal.pageSize.getWidth();
+      var pdfH = pdf.internal.pageSize.getHeight();
 
-      // Convert canvas pixels to mm
-      var imgW = pdfW;
-      var imgH = (canvasH * pdfW) / canvasW;
+      // Get full content height
+      var body = iframe.contentDocument.body;
+      var docEl = iframe.contentDocument.documentElement;
+      var fullH = Math.max(body.scrollHeight, body.offsetHeight, docEl.scrollHeight);
+      iframe.style.height = fullH + 'px';
+      await new Promise(function(r){ setTimeout(r, 200); });
 
-      var heightLeft = imgH;
-      var position = 0;
+      // Render one A4 page at a time (794px wide x 1122px tall at 96dpi)
+      var A4_H_PX = 1122;
+      var numPages = Math.ceil(fullH / A4_H_PX);
 
-      pdf.addImage(imgData, 'JPEG', 0, position, imgW, imgH);
-      heightLeft -= pdfH;
+      for(var pg=0; pg<numPages; pg++){
+        var canvas = await html2canvas(iframe.contentDocument.documentElement, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          width: 794,
+          height: A4_H_PX,
+          windowWidth: 794,
+          windowHeight: fullH,
+          x: 0,
+          y: pg * A4_H_PX
+        });
 
-      while(heightLeft > 0){
-        position = heightLeft - imgH;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgW, imgH);
-        heightLeft -= pdfH;
+        var imgData = canvas.toDataURL('image/jpeg', 0.92);
+        if(pg > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, pdfH);
       }
 
-      var safeName = (p.name||'paciente').replace(/[^\wÀ-ɏ ]/g,'').trim();
+      var safeName = (p.name||'paciente').replace(/[^a-zA-Z0-9À-ɏ ]/g,'').trim();
       var fname = 'VetInterna - '+safeName+' - '+(p.animalId||p.id)+'.pdf';
       zip.file(fname, pdf.output('arraybuffer'));
 
@@ -2896,10 +2922,10 @@ async function exportAllAltasPDF(){
     }
 
     toast('Processando '+(i+1)+' de '+altas.length+'...');
-    await new Promise(function(r){ setTimeout(r, 200); });
+    await new Promise(function(r){ setTimeout(r, 300); });
   }
 
-  document.body.removeChild(container);
+  document.body.removeChild(iframe);
 
   var zipBlob = await zip.generateAsync({type:'blob'});
   var url = URL.createObjectURL(zipBlob);
