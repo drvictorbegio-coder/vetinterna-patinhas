@@ -312,6 +312,7 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -2831,37 +2832,70 @@ async function exportAllAltasPDF(){
   var altas=patients.filter(function(p){ return p.status==='Alta'||p.status==='Óbito'; })
     .filter(function(p){ return filterMode==='todos'||(filterMode==='alta'&&p.status==='Alta')||(filterMode==='obito'&&p.status==='Óbito'); });
   if(!altas.length){ toast('Nenhum paciente para exportar.',true); return; }
-
-  if(typeof JSZip === 'undefined'){
-    toast('Erro: biblioteca ZIP não carregada. Recarregue a página.',true);
-    return;
+  if(typeof JSZip==='undefined'||typeof html2canvas==='undefined'){
+    toast('Bibliotecas carregando, tente novamente em 3s.',true); return;
   }
 
-  toast('Gerando ZIP com '+altas.length+' PDFs... aguarde, isso pode levar alguns minutos.');
+  toast('Gerando ZIP com '+altas.length+' prontuários... pode levar alguns minutos.');
 
   var zip = new JSZip();
-  var prev = selId;
+
+  // Hidden container to render HTML
+  var container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;background:white;z-index:-1';
+  document.body.appendChild(container);
 
   for(var i=0; i<altas.length; i++){
     var p = altas[i];
     try{
-      var doc = generatePatientPDFDoc(p);
-      if(doc){
-        var pdfBytes = doc.output('arraybuffer');
-        var safeName = (p.name||'paciente').replace(/[^a-zA-Z0-9À-ɏ\s]/g,'').replace(/\s+/g,' ').trim();
-        var fname = 'VetInterna - '+safeName+' - '+(p.animalId||p.id)+'.pdf';
-        zip.file(fname, pdfBytes);
+      // Render the same beautiful HTML used by PDF Completo
+      var html = buildPronHTML(p);
+      container.innerHTML = html;
+      await new Promise(function(r){ setTimeout(r, 300); }); // let it render
+
+      var canvas = await html2canvas(container, {
+        scale: 1.5,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        width: 794,
+        windowWidth: 794
+      });
+
+      var jsPDF = window.jspdf.jsPDF;
+      var pdf = new jsPDF({orientation:'portrait', unit:'px', format:'a4'});
+      var pdfW = pdf.internal.pageSize.getWidth();
+      var pdfH = pdf.internal.pageSize.getHeight();
+      var imgData = canvas.toDataURL('image/jpeg', 0.85);
+      var canvasH = canvas.height;
+      var canvasW = canvas.width;
+      var ratio = pdfW / canvasW;
+      var totalH = canvasH * ratio;
+      var pageH = pdfH;
+      var position = 0;
+
+      // Add pages
+      pdf.addImage(imgData, 'JPEG', 0, position, pdfW, totalH);
+      while(totalH - Math.abs(position) > pageH){
+        position -= pageH;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, pdfW, totalH);
       }
+
+      var safeName = (p.name||'paciente').replace(/[^\wÀ-ɏ ]/g,'').trim();
+      var fname = 'VetInterna - '+safeName+' - '+(p.animalId||p.id)+'.pdf';
+      zip.file(fname, pdf.output('arraybuffer'));
+
     } catch(e){
-      console.warn('Erro ao gerar PDF de '+p.name+':', e);
+      console.warn('Erro PDF '+p.name+':', e);
     }
-    // Small delay every 5 to not freeze the browser
-    if(i % 5 === 4) await new Promise(function(r){ setTimeout(r, 100); });
+
+    toast('Processando '+(i+1)+' de '+altas.length+'...');
+    await new Promise(function(r){ setTimeout(r, 200); });
   }
 
-  selId = prev;
+  document.body.removeChild(container);
 
-  // Generate and download ZIP
   var zipBlob = await zip.generateAsync({type:'blob'});
   var url = URL.createObjectURL(zipBlob);
   var a = document.createElement('a');
