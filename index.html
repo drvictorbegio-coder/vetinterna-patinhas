@@ -998,30 +998,33 @@ function startRealtime(){
     .on('postgres_changes', {event:'*', schema:'public', table:'tasks'}, function(payload){
       console.log('tasks changed:', payload.eventType);
       if(_suppressRealtime){ showSyncToast(); return; }
-      // Only reload tasks, not patients
-      supa.from('tasks').select('day,data').then(function(tRes){
-        if(tRes.data && tRes.data.length){
-          // Merge: local data wins over remote (local is always more recent when not suppressed)
-          tRes.data.forEach(function(row){
-            var localDay = allTasks[row.day];
-            if(!localDay){
-              // No local data for this day — use remote
-              allTasks[row.day] = row.data;
-            } else {
-              // Merge per patient: local wins (don't overwrite what user just did)
-              var merged = Object.assign({}, row.data);
-              Object.keys(localDay).forEach(function(pid){
-                merged[pid] = Object.assign({}, row.data[pid]||{}, localDay[pid]);
-              });
-              allTasks[row.day] = merged;
-            }
-          });
-          try{ localStorage.setItem(TK, compress(allTasks)); } catch(e){}
-        }
-        renderCurrentTab();
-        if(curView==='gtarefas') renderGeneralTasks();
-        showSyncToast();
-      });
+      // Debounce: ignore if we already have a pending tasks reload
+      if(_tasksReloadPending) return;
+      _tasksReloadPending = true;
+      setTimeout(function(){
+        _tasksReloadPending = false;
+        supa.from('tasks').select('day,data').then(function(tRes){
+          if(tRes.data && tRes.data.length){
+            // Merge: local data wins over remote
+            tRes.data.forEach(function(row){
+              var localDay = allTasks[row.day];
+              if(!localDay){
+                allTasks[row.day] = row.data;
+              } else {
+                var merged = Object.assign({}, row.data);
+                Object.keys(localDay).forEach(function(pid){
+                  merged[pid] = Object.assign({}, row.data[pid]||{}, localDay[pid]);
+                });
+                allTasks[row.day] = merged;
+              }
+            });
+            try{ localStorage.setItem(TK, compress(allTasks)); } catch(e){}
+          }
+          renderCurrentTab();
+          if(curView==='gtarefas') renderGeneralTasks();
+          showSyncToast();
+        });
+      }, 2000); // wait 2s to batch all rapid task events into one reload
     })
     .subscribe();
 }
@@ -1055,6 +1058,7 @@ var _suppressRealtime = false;
 var _suppressRealtimeTimer = null;
 var _suppressRealtimePatients = false;
 var _suppressRealtimePatientsTimer = null;
+var _tasksReloadPending = false;
 function saveData(){
   // localStorage backup
   try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
@@ -1064,8 +1068,22 @@ function saveData(){
   _suppressRealtimePatients = true;
   clearTimeout(_suppressRealtimePatientsTimer);
   _suppressRealtimePatientsTimer = setTimeout(function(){ _suppressRealtimePatients = false; }, 12000);
+  var patientsJSON = JSON.stringify(patients);
+  console.log('[VET-SAVE] Salvando no Supabase. Tamanho:', Math.round(patientsJSON.length/1024), 'KB | Pacientes:', patients.length, '| Evoluções totais:', patients.reduce(function(a,p){return a+(p.evolution||[]).length;},0));
   supa.from('patients').upsert({id:1, data:patients, updated_at:new Date().toISOString()})
-    .then(function(res){ if(res.error) console.warn('saveData error:', res.error); });
+    .then(function(res){
+      if(res.error){
+        console.error('[VET-SAVE] ERRO no Supabase:', JSON.stringify(res.error));
+        // Show visible alert to user so they know the save failed
+        toast('⚠️ Erro ao salvar no servidor! Dados mantidos localmente. Código: ' + (res.error.code||res.error.message||'desconhecido'), true);
+      } else {
+        console.log('[VET-SAVE] Supabase OK. Evoluções confirmadas:', patients.reduce(function(a,p){return a+(p.evolution||[]).length;},0));
+      }
+    })
+    .catch(function(err){
+      console.error('[VET-SAVE] EXCEÇÃO no Supabase:', err);
+      toast('⚠️ Erro de conexão ao salvar! Verifique a internet.', true);
+    });
 }
 
 function saveTasks(){
