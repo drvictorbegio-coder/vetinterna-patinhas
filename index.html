@@ -2344,9 +2344,13 @@ function buildEvolCard(ev){
   html += '<span style="font-size:13px;font-weight:800;color:var(--blue2)">'+fmtD(ev.date)+' às '+ev.time+'</span>';
   html += '<span style="font-size:11px;color:var(--gray);margin-left:10px">Dr(a). '+(ev.vet||'—')+'</span>';
   html += '</div>';
+  // delete button always visible
+  html += '<div style="display:flex;gap:6px;align-items:center">';
   if(hasSnap){
         html += '<button data-eid="'+eid+'" onclick="toggleEvolCard(this.dataset.eid)" style="background:var(--gray4);border:none;border-radius:7px;padding:4px 10px;font-size:11px;font-weight:700;color:var(--gray);cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:4px" id="btn_'+eid+'">Ocultar resumo ↑</button>';
   }
+  html += '<button onclick="deleteEvol(\''+ev.id+'\')" style="background:none;border:none;cursor:pointer;color:var(--gray2);font-size:16px;padding:2px 6px;border-radius:6px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--gray2)\'">🗑</button>';
+  html += '</div>';
   html += '</div>';
 
   // evolution text
@@ -2468,11 +2472,23 @@ function renderEvolucao(p){
   let cards='';
   sorted.forEach(function(ev){ cards+=buildEvolCard(ev); });
   return '<div class="card">'
-    +'<div class="card-t">📝 Evolução Clínica</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+    +'<div class="card-t" style="margin-bottom:0">📝 Evolução Clínica</div>'
+    +'<button onclick="openEvol()" style="padding:8px 16px;background:var(--blue2);color:white;border:none;border-radius:9px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">＋ Nova Evolução</button>'
+    +'</div>'
     +(!evols.length?'<div style="color:var(--gray2);font-size:13px;padding:8px 0">Nenhuma evolução registrada.</div>':'')
     +cards
-    +'<button class="sec-add" onclick="openEvol()">＋ Nova Evolução</button>'
     +'</div>';
+}
+
+function deleteEvol(evolId){
+  var p = getSel(); if(!p) return;
+  if(!confirm('Excluir esta evolução? Ação irreversível.')) return;
+  p.evolution = (p.evolution||[]).filter(function(e){ return e.id != evolId; });
+  saveData();
+  var cnt = document.getElementById('pcnt');
+  if(cnt) cnt.innerHTML = renderEvolucao(p);
+  toast('Evolução excluída.');
 }
 
 function openEvol(){
