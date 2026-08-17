@@ -2681,7 +2681,9 @@ function renderAltas(){
   }
 
   // storage tip
-  const totalKB=storKB();
+  // Calculate real size (what goes to Supabase)
+  var realKB = Math.round(JSON.stringify(patients).length / 1024);
+  var totalKB = realKB + ' KB (Supabase)';
   let rows='';
   filtered.forEach(function(p){
     var isObito=p.status==='Óbito';
@@ -2739,20 +2741,35 @@ function renderAltas(){
   });
 
   // storage summary bar
-  const usedPct=Math.min(100,Math.round(parseFloat(totalKB)/5000*100));
-  const barColor=usedPct>80?'var(--red)':usedPct>50?'var(--yellow)':'var(--green)';
+  const SUPA_LIMIT_KB = 1000;
+  const usedPct=Math.min(100,Math.round(realKB/SUPA_LIMIT_KB*100));
+  const barColor=usedPct>85?'var(--red)':usedPct>60?'var(--yellow)':'var(--green)';
   const storBar='<div style="background:white;border-radius:13px;border:1px solid var(--border);padding:14px 18px;margin-bottom:14px;box-shadow:var(--sh)">'
     +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
     +'<div style="font-size:12px;font-weight:800;color:var(--text)">💾 Uso de armazenamento</div>'
-    +'<div style="font-size:12px;font-weight:700;color:'+barColor+'">'+totalKB+' KB / 5.000 KB ('+usedPct+'%)</div>'
+    +'<div style="font-size:12px;font-weight:700;color:'+barColor+'">'+realKB+' KB / 1.000 KB ('+usedPct+'%)</div>'
     +'</div>'
     +'<div style="background:var(--gray4);border-radius:99px;height:8px;overflow:hidden">'
     +'<div style="height:100%;border-radius:99px;background:'+barColor+';width:'+usedPct+'%;transition:width .4s"></div>'
     +'</div>'
-    +'<div style="font-size:11px;color:var(--gray2);margin-top:8px">💡 Dica: baixe o histórico do paciente e depois exclua para liberar espaço.</div>'
+    +(usedPct>85?'<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:8px">⚠️ ATENÇÃO: Banco acima de 85%! Exclua os registros de alta para evitar perda de evoluções.</div>':'<div style="font-size:11px;color:var(--gray2);margin-top:8px">💡 Baixe os PDFs e exclua os registros de alta para liberar espaço.</div>')
     +'</div>';
 
-  el.innerHTML=storBar+rows;
+  // Bulk action buttons
+  const totalAltas = filtered.length;
+  const totalKBAltas = filtered.reduce(function(acc,p){ return acc+Math.round(JSON.stringify(p).length/1024*10)/10; },0).toFixed(1);
+  const bulkBar = '<div style="background:white;border-radius:13px;border:1.5px solid var(--border);padding:14px 18px;margin-bottom:14px;box-shadow:var(--sh);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
+    +'<div style="font-size:12px;color:var(--gray)">'
+    +'<span style="font-weight:800;color:var(--text)">'+totalAltas+' registros</span>'
+    +' ocupando <span style="font-weight:800;color:var(--red)">~'+totalKBAltas+' KB</span> no banco de dados'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +'<button onclick="exportAllAltasPDF()" style="padding:8px 16px;background:var(--blue2);color:white;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">📦 Baixar todos os PDFs</button>'
+    +'<button onclick="deleteAllAltas()" style="padding:8px 16px;background:var(--red);color:white;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">🗑 Excluir todos</button>'
+    +'</div>'
+    +'</div>';
+
+  el.innerHTML=storBar+bulkBar+rows;
 }
 
 function openAltaPron(id){
@@ -2803,6 +2820,39 @@ function deleteAltaPatient(id){
   saveData();
   renderAltas();
   toast('Histórico de '+p.name+' excluído. '+storKB()+' KB em uso.');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// BULK ALTA ACTIONS
+// ══════════════════════════════════════════════════════════════════════
+async function exportAllAltasPDF(){
+  var filterMode=window._altaFilter||'todos';
+  var altas=patients.filter(function(p){ return p.status==='Alta'||p.status==='Óbito'; })
+    .filter(function(p){ return filterMode==='todos'||(filterMode==='alta'&&p.status==='Alta')||(filterMode==='obito'&&p.status==='Óbito'); });
+  if(!altas.length){ toast('Nenhum paciente para exportar.',true); return; }
+  toast('Gerando '+altas.length+' PDFs... aguarde.');
+  var prev=selId;
+  for(var i=0;i<altas.length;i++){
+    selId=altas[i].id;
+    downloadHistoricoPDF();
+    await new Promise(function(r){ setTimeout(r,800); });
+  }
+  selId=prev;
+  toast('✅ '+altas.length+' PDFs baixados!');
+}
+
+function deleteAllAltas(){
+  var filterMode=window._altaFilter||'todos';
+  var altas=patients.filter(function(p){ return p.status==='Alta'||p.status==='Óbito'; })
+    .filter(function(p){ return filterMode==='todos'||(filterMode==='alta'&&p.status==='Alta')||(filterMode==='obito'&&p.status==='Óbito'); });
+  if(!altas.length){ toast('Nenhum paciente para excluir.',true); return; }
+  var totalKB = altas.reduce(function(acc,p){ return acc+Math.round(JSON.stringify(p).length/1024*10)/10; },0).toFixed(1);
+  if(!confirm('Excluir '+altas.length+' registros ('+totalKB+' KB)? Certifique-se de ter baixado os PDFs antes. Esta ação é irreversível.')) return;
+  var altaIds=altas.map(function(p){ return p.id; });
+  patients=patients.filter(function(p){ return !altaIds.includes(p.id); });
+  saveData();
+  renderAltas();
+  toast('✅ '+altas.length+' registros excluídos. Espaço liberado: ~'+totalKB+' KB.');
 }
 
 // ══════════════════════════════════════════════════════════════════════
