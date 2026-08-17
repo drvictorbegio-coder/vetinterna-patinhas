@@ -311,6 +311,7 @@ body{font-family:'DM Sans',sans-serif;background:#eef2f7;min-height:100vh;displa
 .discharge-info-t{font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -2830,15 +2831,45 @@ async function exportAllAltasPDF(){
   var altas=patients.filter(function(p){ return p.status==='Alta'||p.status==='Óbito'; })
     .filter(function(p){ return filterMode==='todos'||(filterMode==='alta'&&p.status==='Alta')||(filterMode==='obito'&&p.status==='Óbito'); });
   if(!altas.length){ toast('Nenhum paciente para exportar.',true); return; }
-  toast('Gerando '+altas.length+' PDFs... aguarde.');
-  var prev=selId;
-  for(var i=0;i<altas.length;i++){
-    selId=altas[i].id;
-    downloadHistoricoPDF();
-    await new Promise(function(r){ setTimeout(r,800); });
+
+  if(typeof JSZip === 'undefined'){
+    toast('Erro: biblioteca ZIP não carregada. Recarregue a página.',true);
+    return;
   }
-  selId=prev;
-  toast('✅ '+altas.length+' PDFs baixados!');
+
+  toast('Gerando ZIP com '+altas.length+' PDFs... aguarde, isso pode levar alguns minutos.');
+
+  var zip = new JSZip();
+  var prev = selId;
+
+  for(var i=0; i<altas.length; i++){
+    var p = altas[i];
+    try{
+      var doc = generatePatientPDFDoc(p);
+      if(doc){
+        var pdfBytes = doc.output('arraybuffer');
+        var safeName = (p.name||'paciente').replace(/[^a-zA-Z0-9À-ɏ\s]/g,'').replace(/\s+/g,' ').trim();
+        var fname = 'VetInterna - '+safeName+' - '+(p.animalId||p.id)+'.pdf';
+        zip.file(fname, pdfBytes);
+      }
+    } catch(e){
+      console.warn('Erro ao gerar PDF de '+p.name+':', e);
+    }
+    // Small delay every 5 to not freeze the browser
+    if(i % 5 === 4) await new Promise(function(r){ setTimeout(r, 100); });
+  }
+
+  selId = prev;
+
+  // Generate and download ZIP
+  var zipBlob = await zip.generateAsync({type:'blob'});
+  var url = URL.createObjectURL(zipBlob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'prontuarios_altas_'+todayKey()+'.zip';
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+  toast('✅ ZIP com '+altas.length+' prontuários baixado!');
 }
 
 function deleteAllAltas(){
@@ -4098,6 +4129,83 @@ function _exportPDF_unused(p){
   var fname='prontuario_'+( p.name||'paciente').replace(/\s+/g,'_')+'_'+(p.dischargeDate||new Date().toISOString().slice(0,10))+'.pdf';
   doc.save(fname);
   toast('PDF de '+p.name+' baixado!');
+}
+
+// Returns jsPDF doc for a patient (used by ZIP export)
+function generatePatientPDFDoc(p){
+  if(typeof window.jspdf==='undefined') return null;
+  var jsPDF=window.jspdf.jsPDF;
+  var doc=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  var pageW=210, margin=16, colW=pageW-margin*2;
+  var y=margin;
+  var lineH=5.5;
+
+  function checkPage(needed){ if(y+(needed||lineH)>285){doc.addPage();y=margin;} }
+  function h1(t){ checkPage(10); doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(0,122,140); doc.text(t,margin,y); y+=8; }
+  function h2(t){ checkPage(8); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(15,23,42); doc.text(t,margin,y); y+=6; }
+  function body(t,indent){ checkPage(); doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(50,65,80); var lines=doc.splitTextToSize(t,colW-(indent||0)); lines.forEach(function(l){ checkPage(); doc.text(l,(margin+(indent||0)),y); y+=lineH; }); }
+  function sep(){ checkPage(3); doc.setDrawColor(200,210,220); doc.line(margin,y,margin+colW,y); y+=4; }
+
+  // Header
+  doc.setFillColor(0,122,140); doc.rect(0,0,210,24,'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(255,255,255);
+  doc.text('VetInterna — Prontuário de Internação',margin,13);
+  doc.setFontSize(8); doc.setFont('helvetica','normal');
+  doc.text('Emitido em '+new Date().toLocaleString('pt-BR'),margin,18);
+  doc.text('Hospital Veterinário Patinhas de Assis',margin+colW,13,{align:'right'});
+  y=30;
+
+  h1(p.name||'—');
+  // basic info grid
+  var fields=[['Espécie',(p.species||'—')+(p.breed?' · '+p.breed:'')],['Tutor',p.owner||'—'],['Telefone',p.phone||'—'],['ID',String(p.animalId||p.id||'—')],['Internação',p.admissionDate?fmtD(p.admissionDate):'—'],['Alta/Óbito',p.dischargeDate?fmtD(p.dischargeDate):p.obitoDate?fmtD(p.obitoDate):'—'],['Diagnóstico',p.diagnosis||'—'],['Risco',p.risk||'—']];
+  var col=0; var rowY=y;
+  fields.forEach(function(f,i){
+    var x2=col===0?margin:margin+colW/2;
+    doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(100,116,139);
+    doc.text(f[0].toUpperCase(),x2,rowY);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(15,23,42);
+    doc.text(String(f[1]),x2,rowY+4.5);
+    col++; if(col===2){ col=0; rowY+=12; }
+  });
+  y=rowY+14; sep();
+
+  // Evoluções
+  h2('Evoluções Clínicas');
+  var evols=[...(p.evolution||[])].sort(function(a,b){ return (a.date+a.time).localeCompare(b.date+b.time); });
+  if(evols.length){
+    evols.forEach(function(ev){
+      checkPage(20);
+      doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(0,122,140);
+      doc.text(fmtD(ev.date)+' às '+ev.time+(ev.vet?' — '+ev.vet:''),margin,y); y+=5;
+      if(ev.text) body(ev.text,3);
+      y+=2;
+    });
+  } else { body('Nenhuma evolução registrada.'); }
+  sep();
+
+  // Parâmetros
+  h2('Parâmetros Vitais');
+  var params=(p.paramHistory||[]).sort(function(a,b){ return (a.date+a.time).localeCompare(b.date+b.time); });
+  if(params.length){
+    params.forEach(function(h){ checkPage(10); doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(100,116,139); doc.text(fmtD(h.date)+' '+h.time,margin,y); y+=4.5; var vals=Object.entries(h.values||{}).map(function(e){ return e[0]+': '+e[1]; }).join('  ·  '); body(vals,3); y+=1; });
+  } else { body('Nenhum parâmetro registrado.'); }
+  sep();
+
+  // Medicações
+  h2('Medicações Prescritas');
+  if((p.medications||[]).length){
+    (p.medications||[]).forEach(function(m){ checkPage(12); doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(15,23,42); doc.text((m.name||'')+(m.dose?' — '+m.dose:'')+(m.vol?' | '+m.vol:''),margin+3,y); doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(100,116,139); doc.text('Via '+m.route+' · '+(m.freq==='DU'?'Dose única':m.freq==='CI'?'Infusão contínua':m.freq+'h')+(m.start?' · Início '+m.start:''),margin+3,y+4.5); y+=13; });
+  } else { body('Nenhuma medicação cadastrada.'); }
+
+  // Footer
+  var pageCount=doc.internal.getNumberOfPages();
+  for(var i=1;i<=pageCount;i++){
+    doc.setPage(i); doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(150,163,180);
+    doc.text('VetInterna · Hospital Veterinário Patinhas de Assis',margin,292);
+    doc.text('Página '+i+' de '+pageCount,margin+colW,292,{align:'right'});
+  }
+
+  return doc;
 }
 
 function printPron(){
