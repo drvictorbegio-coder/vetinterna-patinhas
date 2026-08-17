@@ -2854,7 +2854,7 @@ async function exportAllAltasPDF(){
       await new Promise(function(r){ setTimeout(r, 300); }); // let it render
 
       var canvas = await html2canvas(container, {
-        scale: 1.5,
+        scale: 2,
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#ffffff',
@@ -2863,23 +2863,28 @@ async function exportAllAltasPDF(){
       });
 
       var jsPDF = window.jspdf.jsPDF;
-      var pdf = new jsPDF({orientation:'portrait', unit:'px', format:'a4'});
-      var pdfW = pdf.internal.pageSize.getWidth();
-      var pdfH = pdf.internal.pageSize.getHeight();
-      var imgData = canvas.toDataURL('image/jpeg', 0.85);
-      var canvasH = canvas.height;
+      var pdf = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+      var pdfW = pdf.internal.pageSize.getWidth();   // 210mm
+      var pdfH = pdf.internal.pageSize.getHeight();  // 297mm
+      var imgData = canvas.toDataURL('image/jpeg', 0.90);
       var canvasW = canvas.width;
-      var ratio = pdfW / canvasW;
-      var totalH = canvasH * ratio;
-      var pageH = pdfH;
+      var canvasH = canvas.height;
+
+      // Convert canvas pixels to mm
+      var imgW = pdfW;
+      var imgH = (canvasH * pdfW) / canvasW;
+
+      var heightLeft = imgH;
       var position = 0;
 
-      // Add pages
-      pdf.addImage(imgData, 'JPEG', 0, position, pdfW, totalH);
-      while(totalH - Math.abs(position) > pageH){
-        position -= pageH;
+      pdf.addImage(imgData, 'JPEG', 0, position, imgW, imgH);
+      heightLeft -= pdfH;
+
+      while(heightLeft > 0){
+        position = heightLeft - imgH;
         pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, pdfW, totalH);
+        pdf.addImage(imgData, 'JPEG', 0, position, imgW, imgH);
+        heightLeft -= pdfH;
       }
 
       var safeName = (p.name||'paciente').replace(/[^\wÀ-ɏ ]/g,'').trim();
