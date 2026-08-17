@@ -982,6 +982,10 @@ function startRealtime(){
       // Only reload patients, not tasks
       supa.from('patients').select('data').eq('id',1).single().then(function(pRes){
         if(pRes.data && pRes.data.data){
+          var evolAntes = patients.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0);
+          var evolDepois = pRes.data.data.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0);
+          console.log('[VET-RT] Realtime patients. Evoluções antes:', evolAntes, '| depois:', evolDepois);
+          if(evolDepois < evolAntes){ console.error('[VET-RT] ALERTA: Realtime ia apagar', evolAntes-evolDepois, 'evoluções!'); }
           patients = pRes.data.data;
           try{ localStorage.setItem(SK, compress(patients)); } catch(e){}
         }
@@ -1091,12 +1095,13 @@ async function loadData(){
       // CRITICAL: only overwrite patients if Supabase returned valid non-empty data
       // If Supabase returns null/empty, keep localStorage data to avoid wiping evolutions
       if(pRes.data && pRes.data.data && Array.isArray(pRes.data.data) && pRes.data.data.length > 0){
+        console.log('[VET-LOAD] Supabase retornou', pRes.data.data.length, 'pacientes. Evoluções totais:', pRes.data.data.reduce(function(acc,p){ return acc+(p.evolution||[]).length; },0));
         patients = pRes.data.data;
       } else if(pRes.data && pRes.data.data && Array.isArray(pRes.data.data)){
-        // Supabase returned empty array — trust localStorage if it has data
-        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d && d.length>0){ patients=d; } else { patients=[]; } } catch(e){ patients=[]; }
+        console.warn('[VET-LOAD] Supabase retornou array VAZIO. Usando localStorage.');
+        try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d && d.length>0){ patients=d; console.log('[VET-LOAD] localStorage tinha', d.length, 'pacientes.'); } else { patients=[]; } } catch(e){ patients=[]; }
       } else {
-        // Supabase returned null — use localStorage as fallback
+        console.warn('[VET-LOAD] Supabase retornou NULL. pRes:', JSON.stringify(pRes).slice(0,200), '| Usando localStorage.');
         try{ const r=localStorage.getItem(SK); const d=decompress(r); if(d) patients=d; } catch(e){ patients=[]; }
       }
 
@@ -3446,7 +3451,18 @@ function saveEvol(){
     snapshot:{params:snapParams, meds:snapMeds, meals:snapMeals, plan:snapPlan, inter:snapInter},
   };
   if(!p.evolution) p.evolution=[];
-  p.evolution.push(ev); saveData();
+  p.evolution.push(ev);
+  console.log('[VET-EVOL] Salvando evolução. Total evoluções do paciente:', p.evolution.length, '| Paciente:', p.name, '| Data:', ev.date, '| ID:', ev.id);
+  saveData();
+  // Verify after 2s that evolution is still there
+  setTimeout(function(){
+    var pp = patients.find(function(x){ return x.id === p.id; });
+    var cnt = pp ? (pp.evolution||[]).length : 'PACIENTE NAO ENCONTRADO';
+    console.log('[VET-EVOL] Verificação 2s após salvar. Evoluções:', cnt, '| Paciente:', p.name);
+    if(pp && (pp.evolution||[]).length < p.evolution.length){
+      console.error('[VET-EVOL] ALERTA: Evolução sumiu em 2 segundos!');
+    }
+  }, 2000);
   closeM('m-evol'); clearInputs('m-evol');
   const cntE=document.getElementById('pcnt');
   if(cntE) cntE.innerHTML=renderEvolucao(p);
